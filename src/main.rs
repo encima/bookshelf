@@ -24,33 +24,22 @@ fn print_usage(prog: &str, opts: Options) {
     print!("{}", opts.usage(&brief));
 }
 
-fn add_bookmark(url: &str, section: &str, tags: Vec<String>, bms:&mut Vec<Bookmark>) -> SqliteResult<Vec<Bookmark>> {
-    let added = Bookmark {
+fn add_bookmark(url: &str, section: &str, tags: Vec<String>) -> SqliteResult<bool> {
+    let mut added = Bookmark {
         url: url.to_string(),
         section: section.to_string(),
         tags: tags,
     };
-    bms.push(added);
-    // let encoded = json::encode(&added).unwrap();
-    let filename = "bookmarks.txt";
-    //try expects a function to return a result
-    let mut file = match File::create(filename) {
-        Err(why) => panic!("Oops {}", why),
-        Ok(file) => file,
-    };
 
+	//TODO: open in file, when not in dev, and pass by reference
     let mut conn = try!(DatabaseConnection::in_memory());
 
-    try!(conn.exec("CREATE TABLE bookmarks (
+	//TODO: move out to separate connection handler
+    try!(conn.exec("CREATE TABLE IF NOT EXISTS bookmarks (
                  id              SERIAL PRIMARY KEY,
                  url            VARCHAR NOT NULL
                )"));
 
-    let me = Person {
-        id: 0,
-        name: format!("Dan"),
-        time_created: time::get_time(),
-    };
     {
         let mut tx = try!(conn.prepare("INSERT INTO bookmarks (url)
                            VALUES ($1)"));
@@ -58,24 +47,27 @@ fn add_bookmark(url: &str, section: &str, tags: Vec<String>, bms:&mut Vec<Bookma
         assert_eq!(changes, 1);
     }
 
-    // try!(file.write_fmt(format_args!("{}\n", url)));
-    Ok(bms)
+    Ok(true)
 }
 
-fn list_bookmarks() {
-    let file = match File::open("bookmarks.txt") {
-        Err(why) => panic!("Oops {}", why),
-        Ok(file) => file,
-    };
-    let reader = BufReader::new(file);
-
+fn list_bookmarks() -> SqliteResult<Vec<Bookmark>> {
     println!("Bookshelf:");
-    //TODO make error safe
-    for line in reader.lines() {
-        let l = line.unwrap();
-        println!("{}", l);
-    }
+    let mut conn = try!(DatabaseConnection::in_memory());
 
+	//TODO: move out to separate connection handler
+    let mut stmt = try!(conn.prepare("SELECT id, url FROM bookmarks"));
+
+    let mut bms = vec!();
+    try!(stmt.query(
+        &[], &mut |row| {
+            bms.push(Bookmark {
+                url: row.get(1),
+				section: "".to_string(),
+				tags: vec!(),
+            });
+            Ok(())
+        }));
+    Ok(bms)
 }
 
 fn main() {
@@ -107,7 +99,7 @@ fn main() {
         println!("Adding {}", url);
         let section = matches.opt_str("s").unwrap_or(String::from("inbox"));
         let tags = matches.opt_strs("t");
-        let result = add_bookmark(&url, &section, tags, &mut bookmarks);
+        let result = add_bookmark(&url, &section, tags);
         match result {
             Ok(s) => println!("All good"),
             Err(f) => panic!("Failed to add: {}", f),
