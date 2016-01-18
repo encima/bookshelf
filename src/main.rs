@@ -1,6 +1,5 @@
 extern crate sqlite3;
 extern crate getopts;
-use std::io::prelude::*;
 use getopts::Options;
 use std::env;
 
@@ -11,6 +10,7 @@ use sqlite3::{
     SqliteResult,
     StatementUpdate,
 };
+use sqlite3::access;
 
 #[derive(Debug)]
 pub struct Bookmark  {
@@ -24,15 +24,12 @@ fn print_usage(prog: &str, opts: Options) {
     print!("{}", opts.usage(&brief));
 }
 
-fn add_bookmark(url: &str, section: &str, tags: Vec<String>) -> SqliteResult<bool> {
-    let mut added = Bookmark {
+fn add_bookmark(mut conn: DatabaseConnection, url: &str, section: &str, tags: Vec<String>) -> SqliteResult<bool> {
+    let added = Bookmark {
         url: url.to_string(),
         section: section.to_string(),
         tags: tags,
     };
-
-	//TODO: open in file, when not in dev, and pass by reference
-    let mut conn = try!(DatabaseConnection::in_memory());
 
 	//TODO: move out to separate connection handler
     try!(conn.exec("CREATE TABLE IF NOT EXISTS bookmarks (
@@ -50,14 +47,14 @@ fn add_bookmark(url: &str, section: &str, tags: Vec<String>) -> SqliteResult<boo
     Ok(true)
 }
 
-fn list_bookmarks() -> SqliteResult<Vec<Bookmark>> {
+fn list_bookmarks(conn: DatabaseConnection) -> SqliteResult<Vec<Bookmark>> {
     println!("Bookshelf:");
-    let mut conn = try!(DatabaseConnection::in_memory());
 
-	//TODO: move out to separate connection handler
+	//TODO: check if passed query string is null or search for if not
     let mut stmt = try!(conn.prepare("SELECT id, url FROM bookmarks"));
 
     let mut bms = vec!();
+
     try!(stmt.query(
         &[], &mut |row| {
             bms.push(Bookmark {
@@ -70,9 +67,13 @@ fn list_bookmarks() -> SqliteResult<Vec<Bookmark>> {
     Ok(bms)
 }
 
+
 fn main() {
-    let mut bookmarks: Vec<Bookmark> = Vec::new();
     let args: Vec<_> = env::args().collect();
+	let db_details = access::ByFilename { flags: Default::default(), filename: "bookshelf.db" };
+
+	//TODO: error handle no connection
+	let conn = DatabaseConnection::new(db_details).unwrap();
 
     let prog = &args[0];
     let mut opts = Options::new();
@@ -91,7 +92,10 @@ fn main() {
         return;
     }
     if matches.opt_present("l") {
-        list_bookmarks();
+        let bms = list_bookmarks(conn);
+		for b in bms {
+			println!("{:?}", b);
+		}
         return;
     }
     if matches.opt_present("a") {
@@ -99,9 +103,9 @@ fn main() {
         println!("Adding {}", url);
         let section = matches.opt_str("s").unwrap_or(String::from("inbox"));
         let tags = matches.opt_strs("t");
-        let result = add_bookmark(&url, &section, tags);
+        let result = add_bookmark(conn, &url, &section, tags);
         match result {
-            Ok(s) => println!("All good"),
+            Ok(s) => println!("All good: {}", s),
             Err(f) => panic!("Failed to add: {}", f),
         }
         return;
