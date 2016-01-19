@@ -31,11 +31,23 @@ fn add_bookmark(mut conn: DatabaseConnection, url: &str, section: &str, tags: Ve
         tags: tags,
     };
 
-	//TODO: move out to separate connection handler
+	//TODO: move out to separate connection handler and do not run every time!
     try!(conn.exec("CREATE TABLE IF NOT EXISTS bookmarks (
                  id              SERIAL PRIMARY KEY,
                  url            VARCHAR NOT NULL
                )"));
+   try!(conn.exec("CREATE TABLE IF NOT EXISTS sections (
+   				 id              SERIAL PRIMARY KEY,
+   				 section            VARCHAR NOT NULL
+   			   )"));
+   	try!(conn.exec("CREATE TABLE IF NOT EXISTS tags (
+   				 id              SERIAL PRIMARY KEY,
+   				 tag            VARCHAR NOT NULL
+   			   )"));
+   	try!(conn.exec("CREATE TABLE IF NOT EXISTS tags_bookmarks (
+   				tag_id              SERIAL NOT NULL,
+   				bookmark_id         SERIAL NOT NULL
+   			  )"));
 
     {
         let mut tx = try!(conn.prepare("INSERT INTO bookmarks (url)
@@ -47,11 +59,14 @@ fn add_bookmark(mut conn: DatabaseConnection, url: &str, section: &str, tags: Ve
     Ok(true)
 }
 
-fn list_bookmarks(conn: DatabaseConnection) -> SqliteResult<Vec<Bookmark>> {
+fn list_bookmarks(conn: DatabaseConnection, term: String) -> SqliteResult<Vec<Bookmark>> {
     println!("Bookshelf:");
 
-	//TODO: check if passed query string is null or search for if not
-    let mut stmt = try!(conn.prepare("SELECT id, url FROM bookmarks"));
+	let mut select_string = String::from("SELECT id, url FROM bookmarks");
+	if term.len() > 0 {
+		select_string.push_str(&format!(" WHERE url LIKE \"%{}%\"", term));
+	}
+    let mut stmt = try!(conn.prepare(&select_string));
 
     let mut bms = vec!();
 
@@ -70,7 +85,8 @@ fn list_bookmarks(conn: DatabaseConnection) -> SqliteResult<Vec<Bookmark>> {
 
 fn main() {
     let args: Vec<_> = env::args().collect();
-	let db_details = access::ByFilename { flags: Default::default(), filename: "bookshelf.db" };
+	let db_path = "bookshelf.db";
+	let db_details = access::ByFilename { flags: Default::default(), filename: db_path };
 
 	//TODO: error handle no connection
 	let conn = DatabaseConnection::new(db_details).unwrap();
@@ -79,7 +95,7 @@ fn main() {
     let mut opts = Options::new();
     opts.optopt("a", "add", "add url", "URL");
     //TODO opflagopt for section or tags?
-    opts.optflag("l", "list", "list all bookmarks");
+    opts.optflagopt("l", "list", "list all bookmarks", "SEARCH_TERM");
     opts.optmulti("t", "tags", "tag bookmarks", "TAGS");
     opts.optopt("s", "section", "Store in section", "SECTION[.SUBSECTION]");
     opts.optflag("h", "help", "print this help menu");
@@ -92,7 +108,8 @@ fn main() {
         return;
     }
     if matches.opt_present("l") {
-        let bms = list_bookmarks(conn);
+		let term = matches.opt_str("l").unwrap_or(String::from(""));
+        let bms = list_bookmarks(conn, term);
 		for b in bms {
 			println!("{:?}", b);
 		}
