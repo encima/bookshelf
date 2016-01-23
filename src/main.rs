@@ -24,22 +24,20 @@ fn print_usage(prog: &str, opts: Options) {
     print!("{}", opts.usage(&brief));
 }
 
-fn add_bookmark(mut conn: DatabaseConnection, url: &str, section: &str, tags: Vec<String>) -> SqliteResult<bool> {
+fn add_bookmark(mut conn: DatabaseConnection, url: &str, tags: Vec<String>) -> SqliteResult<bool> {
     let added = Bookmark {
         url: url.to_string(),
         section: section.to_string(),
         tags: tags,
     };
 
+    //TODO create tag if not exists.
+
 	//TODO: move out to separate connection handler and do not run every time!
     try!(conn.exec("CREATE TABLE IF NOT EXISTS bookmarks (
                  id              SERIAL PRIMARY KEY,
                  url            VARCHAR NOT NULL
                )"));
-   try!(conn.exec("CREATE TABLE IF NOT EXISTS sections (
-   				 id              SERIAL PRIMARY KEY,
-   				 section            VARCHAR NOT NULL
-   			   )"));
    	try!(conn.exec("CREATE TABLE IF NOT EXISTS tags (
    				 id              SERIAL PRIMARY KEY,
    				 tag            VARCHAR NOT NULL
@@ -97,7 +95,7 @@ fn main() {
     //TODO opflagopt for section or tags?
     opts.optflagopt("l", "list", "list all bookmarks", "SEARCH_TERM");
     opts.optmulti("t", "tags", "tag bookmarks", "TAGS");
-    opts.optopt("s", "section", "Store in section", "SECTION[.SUBSECTION]");
+    //opts.optopt("s", "section", "Store in section", "SECTION[.SUBSECTION]");
     opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => { m }
@@ -118,9 +116,8 @@ fn main() {
     if matches.opt_present("a") {
         let url = matches.opt_str("a").unwrap();
         println!("Adding {}", url);
-        let section = matches.opt_str("s").unwrap_or(String::from("inbox"));
         let tags = matches.opt_strs("t");
-        let result = add_bookmark(conn, &url, &section, tags);
+        let result = add_bookmark(conn, &url, tags);
         match result {
             Ok(s) => println!("All good: {}", s),
             Err(f) => panic!("Failed to add: {}", f),
