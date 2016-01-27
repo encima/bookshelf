@@ -45,17 +45,38 @@ fn add_bookmark(mut conn: DatabaseConnection, url: &str, tags: &Vec<String>) -> 
    				bookmark_id         NUMBER NOT NULL
    			  )"));
 
-      //TODO create tag if not exists.
+      let mut tag_ids: Vec<i32> = Vec::new();
+
       for tag in tags {
-          let mut tx = try!(conn.prepare("INSERT INTO tags (tag) VALUES ($1)"));
+          let mut tx = try!(conn.prepare("INSERT OR IGNORE INTO tags (tag) VALUES ($1)"));
           let changes = try!(tx.update(&[tag]));
           assert_eq!(changes, 1);
+          //GET INSERTED TAG ID
+          let mut stmt = try!(conn.prepare(&format!("SELECT id FROM tags WHERE tag=\"{}\"", tag)));
+          try!(stmt.query(
+              &[], &mut |row| {
+                  tag_ids.push(row.get(0));
+                  Ok(())
+              }));
       }
 
+    let mut bm_id = 0;
     {
-        let mut tx = try!(conn.prepare("INSERT INTO bookmarks (url)
-                           VALUES ($1)"));
+        let mut tx = try!(conn.prepare("INSERT INTO bookmarks (url) VALUES ($1)"));
         let changes = try!(tx.update(&[&url.to_string()]));
+        assert_eq!(changes, 1);
+        let mut stmt = try!(conn.prepare(&format!("SELECT id FROM bookmarks WHERE url=\"{}\"", url.to_string())));
+        try!(stmt.query(
+            &[], &mut |row| {
+                bm_id = row.get(0);
+                Ok(())
+            }));
+    }
+
+    println!("{}", tag_ids.len());
+    for id in tag_ids {
+        let mut tx = try!(conn.prepare("INSERT INTO tags_bookmarks (tag_id, bookmark_id) VALUES ($1, $2)"));
+        let changes = try!(tx.update(&[&id, &bm_id]));
         assert_eq!(changes, 1);
     }
 
@@ -65,10 +86,11 @@ fn add_bookmark(mut conn: DatabaseConnection, url: &str, tags: &Vec<String>) -> 
 fn list_bookmarks(conn: DatabaseConnection, term: String) -> SqliteResult<Vec<String>> {
     println!("Bookshelf:");
 
-	let mut select_string = String::from("SELECT b.url FROM bookmarks b");
+    // SELECT DISTINCT b.url FROM bookmarks b , tags t, tags_bookmarks tb WHERE t.id = tb.tag_id AND b.id = tb.bm_id AND t.tag LIKE "%dev%"
+	let mut select_string = String::from("SELECT DISTINCT b.url FROM bookmarks b");
 	if term.len() > 0 {
-		select_string.push_str(&format!(", tags t, `tags_bookmarks` tb
-        WHERE t.id = tb.`tag_id` AND b.id = tb.`bm_id` AND t.`tag` LIKE \"%{}%\" OR b.url LIKE \"%{}%\"", term, term));
+		select_string.push_str(&format!(", tags t, tags_bookmarks tb
+        WHERE t.id = tb.tag_id AND b.id = tb.bookmark_id AND t.tag LIKE \"%{}%\" OR b.url LIKE \"%{}%\"", term, term));
 	}
     let mut stmt = try!(conn.prepare(&select_string));
 

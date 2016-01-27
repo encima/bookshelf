@@ -21,7 +21,10 @@ In no order.
 * [] Catch connection errors and handle them
 * [] Create tables one time and do not run again
 * [] Export bookmarks to .html files
-* [] Implement tagging and sections
+* [x] Implement tagging and sections
+* [x] Implement search
+* [] Allow urls to be removed
+* [] Add tags to existing bookmarks
 
 ## Can I Help?
 
