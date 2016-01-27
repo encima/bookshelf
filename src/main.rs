@@ -15,7 +15,6 @@ use sqlite3::access;
 #[derive(Debug)]
 pub struct Bookmark  {
     url: String,
-    section: String,
     tags: Vec<String>,
 }
 
@@ -24,45 +23,52 @@ fn print_usage(prog: &str, opts: Options) {
     print!("{}", opts.usage(&brief));
 }
 
-fn add_bookmark(mut conn: DatabaseConnection, url: &str, tags: Vec<String>) -> SqliteResult<bool> {
-    let added = Bookmark {
-        url: url.to_string(),
-        section: section.to_string(),
-        tags: tags,
-    };
-
-    //TODO create tag if not exists.
+fn add_bookmark(mut conn: DatabaseConnection, url: &str, tags: &Vec<String>) -> SqliteResult<bool> {
+    // let added = Bookmark {
+    //     url: url.to_string(),
+    //     tags: *tags,
+    // };
 
 	//TODO: move out to separate connection handler and do not run every time!
     try!(conn.exec("CREATE TABLE IF NOT EXISTS bookmarks (
-                 id              SERIAL PRIMARY KEY,
-                 url            VARCHAR NOT NULL
+                 id             INTEGER PRIMARY KEY,
+                 url            VARCHAR NOT NULL,
+                 UNIQUE(url)
                )"));
    	try!(conn.exec("CREATE TABLE IF NOT EXISTS tags (
-   				 id              SERIAL PRIMARY KEY,
-   				 tag            VARCHAR NOT NULL
+   				 id             INTEGER PRIMARY KEY,
+   				 tag            VARCHAR NOT NULL,
+                 UNIQUE(tag)
    			   )"));
    	try!(conn.exec("CREATE TABLE IF NOT EXISTS tags_bookmarks (
-   				tag_id              SERIAL NOT NULL,
-   				bookmark_id         SERIAL NOT NULL
+   				tag_id              NUMBER NOT NULL,
+   				bookmark_id         NUMBER NOT NULL
    			  )"));
+
+      //TODO create tag if not exists.
+      for tag in tags {
+          let mut tx = try!(conn.prepare("INSERT INTO tags (tag) VALUES ($1)"));
+          let changes = try!(tx.update(&[tag]));
+          assert_eq!(changes, 1);
+      }
 
     {
         let mut tx = try!(conn.prepare("INSERT INTO bookmarks (url)
                            VALUES ($1)"));
-        let changes = try!(tx.update(&[&added.url]));
+        let changes = try!(tx.update(&[&url.to_string()]));
         assert_eq!(changes, 1);
     }
 
     Ok(true)
 }
 
-fn list_bookmarks(conn: DatabaseConnection, term: String) -> SqliteResult<Vec<Bookmark>> {
+fn list_bookmarks(conn: DatabaseConnection, term: String) -> SqliteResult<Vec<String>> {
     println!("Bookshelf:");
 
-	let mut select_string = String::from("SELECT id, url FROM bookmarks");
+	let mut select_string = String::from("SELECT b.url FROM bookmarks b");
 	if term.len() > 0 {
-		select_string.push_str(&format!(" WHERE url LIKE \"%{}%\"", term));
+		select_string.push_str(&format!(", tags t, `tags_bookmarks` tb
+        WHERE t.id = tb.`tag_id` AND b.id = tb.`bm_id` AND t.`tag` LIKE \"%{}%\" OR b.url LIKE \"%{}%\"", term, term));
 	}
     let mut stmt = try!(conn.prepare(&select_string));
 
@@ -70,11 +76,7 @@ fn list_bookmarks(conn: DatabaseConnection, term: String) -> SqliteResult<Vec<Bo
 
     try!(stmt.query(
         &[], &mut |row| {
-            bms.push(Bookmark {
-                url: row.get(1),
-				section: "".to_string(),
-				tags: vec!(),
-            });
+            bms.push(row.get(0));
             Ok(())
         }));
     Ok(bms)
@@ -117,7 +119,7 @@ fn main() {
         let url = matches.opt_str("a").unwrap();
         println!("Adding {}", url);
         let tags = matches.opt_strs("t");
-        let result = add_bookmark(conn, &url, tags);
+        let result = add_bookmark(conn, &url, &tags);
         match result {
             Ok(s) => println!("All good: {}", s),
             Err(f) => panic!("Failed to add: {}", f),
