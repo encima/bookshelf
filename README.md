@@ -25,6 +25,7 @@ In no order.
 * [x] Implement search
 * [] Allow urls to be removed
 * [] Add tags to existing bookmarks
+* [x] Open results in default browser (only OS X atm)
 
 ## Can I Help?
 

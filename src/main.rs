@@ -1,6 +1,7 @@
 extern crate sqlite3;
 extern crate getopts;
 use getopts::Options;
+use std::process::Command;
 use std::env;
 
 use sqlite3::{
@@ -49,8 +50,8 @@ fn add_bookmark(mut conn: DatabaseConnection, url: &str, tags: &Vec<String>) -> 
 
       for tag in tags {
           let mut tx = try!(conn.prepare("INSERT OR IGNORE INTO tags (tag) VALUES ($1)"));
-          let changes = try!(tx.update(&[tag]));
-          assert_eq!(changes, 1);
+          try!(tx.update(&[tag]));
+        //   assert_eq!(changes, 1);
           //GET INSERTED TAG ID
           let mut stmt = try!(conn.prepare(&format!("SELECT id FROM tags WHERE tag=\"{}\"", tag)));
           try!(stmt.query(
@@ -63,8 +64,8 @@ fn add_bookmark(mut conn: DatabaseConnection, url: &str, tags: &Vec<String>) -> 
     let mut bm_id = 0;
     {
         let mut tx = try!(conn.prepare("INSERT INTO bookmarks (url) VALUES ($1)"));
-        let changes = try!(tx.update(&[&url.to_string()]));
-        assert_eq!(changes, 1);
+        try!(tx.update(&[&url.to_string()]));
+        // assert_eq!(changes, 1);
         let mut stmt = try!(conn.prepare(&format!("SELECT id FROM bookmarks WHERE url=\"{}\"", url.to_string())));
         try!(stmt.query(
             &[], &mut |row| {
@@ -83,7 +84,7 @@ fn add_bookmark(mut conn: DatabaseConnection, url: &str, tags: &Vec<String>) -> 
     Ok(true)
 }
 
-fn list_bookmarks(conn: DatabaseConnection, term: String) -> SqliteResult<Vec<String>> {
+fn get_bookmarks(conn: DatabaseConnection, term: String) -> SqliteResult<Vec<String>> {
     println!("Bookshelf:");
 
     // SELECT DISTINCT b.url FROM bookmarks b , tags t, tags_bookmarks tb WHERE t.id = tb.tag_id AND b.id = tb.bm_id AND t.tag LIKE "%dev%"
@@ -116,10 +117,9 @@ fn main() {
     let prog = &args[0];
     let mut opts = Options::new();
     opts.optopt("a", "add", "add url", "URL");
-    //TODO opflagopt for section or tags?
+    opts.optopt("o", "open", "open urls matching name or tag", "URL/TAG");
     opts.optflagopt("l", "list", "list all bookmarks", "SEARCH_TERM");
     opts.optmulti("t", "tags", "tag bookmarks", "TAGS");
-    //opts.optopt("s", "section", "Store in section", "SECTION[.SUBSECTION]");
     opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => { m }
@@ -131,9 +131,20 @@ fn main() {
     }
     if matches.opt_present("l") {
 		let term = matches.opt_str("l").unwrap_or(String::from(""));
-        let bms = list_bookmarks(conn, term);
+        let bms = get_bookmarks(conn, term).unwrap();
 		for b in bms {
 			println!("{:?}", b);
+		}
+        return;
+    }
+    if matches.opt_present("o") {
+		let term = matches.opt_str("o").unwrap_or(String::from(""));
+        let bms = get_bookmarks(conn, term).unwrap();
+		for b in bms {
+			println!("{:?}", b);
+            //TODO: open across all platforms
+            //TODO: handle http/https
+            Command::new("open").arg("http://".to_string() + &b).spawn().ok().expect("Failed to execute.");
 		}
         return;
     }
