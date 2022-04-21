@@ -1,17 +1,10 @@
-extern crate sqlite3;
+extern crate rusqlite;
 extern crate getopts;
 use getopts::Options;
-use std::process::Command;
 use std::env;
+use std::process::Command;
 
-use sqlite3::{
-    DatabaseConnection,
-    Query,
-    ResultRowAccess,
-    SqliteResult,
-    StatementUpdate,
-};
-use sqlite3::access;
+use rusqlite::{Connection, Result};
 
 #[derive(Debug)]
 pub struct Bookmark  {
@@ -24,95 +17,79 @@ fn print_usage(prog: &str, opts: Options) {
     print!("{}", opts.usage(&brief));
 }
 
-fn add_bookmark(mut conn: DatabaseConnection, url: &str, tags: &Vec<String>) -> SqliteResult<bool> {
+fn add_bookmark(conn: Connection, url: &str, tags: &Vec<String>) -> Result<bool> {
     // let added = Bookmark {
     //     url: url.to_string(),
     //     tags: *tags,
     // };
-
 	//TODO: move out to separate connection handler and do not run every time!
-    try!(conn.exec("CREATE TABLE IF NOT EXISTS bookmarks (
+    conn.execute("CREATE TABLE IF NOT EXISTS bookmarks (
                  id             INTEGER PRIMARY KEY,
                  url            VARCHAR NOT NULL,
                  UNIQUE(url)
-               )"));
-   	try!(conn.exec("CREATE TABLE IF NOT EXISTS tags (
+               )", [])?;
+   	conn.execute("CREATE TABLE IF NOT EXISTS tags (
    				 id             INTEGER PRIMARY KEY,
    				 tag            VARCHAR NOT NULL,
                  UNIQUE(tag)
-   			   )"));
-   	try!(conn.exec("CREATE TABLE IF NOT EXISTS tags_bookmarks (
+   			   )", [])?;
+   	conn.execute("CREATE TABLE IF NOT EXISTS tags_bookmarks (
    				tag_id              NUMBER NOT NULL,
    				bookmark_id         NUMBER NOT NULL
-   			  )"));
+   			  );", [])?;
 
-      let mut tag_ids: Vec<i32> = Vec::new();
+      let tag_ids: Vec<i32> = Vec::new();
 
       for tag in tags {
-          let mut tx = try!(conn.prepare("INSERT OR IGNORE INTO tags (tag) VALUES ($1)"));
-          try!(tx.update(&[tag]));
-        //   assert_eq!(changes, 1);
+          let mut tx = conn.prepare("INSERT OR IGNORE INTO tags (tag) VALUES ($1)")?;
+          tx.execute(&[tag])?;
           //GET INSERTED TAG ID
-          let mut stmt = try!(conn.prepare(&format!("SELECT id FROM tags WHERE tag=\"{}\"", tag)));
-          try!(stmt.query(
-              &[], &mut |row| {
-                  tag_ids.push(row.get(0));
-                  Ok(())
-              }));
+        //   let mut stmt = conn.prepare(&format!("SELECT id FROM tags WHERE tag=\"{}\"", tag))?;
+        //   let rows = stmt.query([]);
       }
 
-    let mut bm_id = 0;
+    let bm_id = 0;
     {
-        let mut tx = try!(conn.prepare("INSERT INTO bookmarks (url) VALUES ($1)"));
-        try!(tx.update(&[&url.to_string()]));
+        let mut tx = conn.prepare("INSERT INTO bookmarks (url) VALUES ($1)")?;
+        tx.execute(&[&url.to_string()])?;
         // assert_eq!(changes, 1);
-        let mut stmt = try!(conn.prepare(&format!("SELECT id FROM bookmarks WHERE url=\"{}\"", url.to_string())));
-        try!(stmt.query(
-            &[], &mut |row| {
-                bm_id = row.get(0);
-                Ok(())
-            }));
+        // let mut stmt = conn.prepare(&format!("SELECT id FROM bookmarks WHERE url=\"{}\"", url.to_string()))?;
+        // let rows = stmt.query([]);
     }
 
     println!("{}", tag_ids.len());
     for id in tag_ids {
-        let mut tx = try!(conn.prepare("INSERT INTO tags_bookmarks (tag_id, bookmark_id) VALUES ($1, $2)"));
-        let changes = try!(tx.update(&[&id, &bm_id]));
+        let mut tx = conn.prepare("INSERT INTO tags_bookmarks (tag_id, bookmark_id) VALUES ($1, $2)")?;
+        let changes = tx.execute(&[&id, &bm_id])?;
         assert_eq!(changes, 1);
     }
 
     Ok(true)
 }
 
-fn get_bookmarks(conn: DatabaseConnection, term: String) -> SqliteResult<Vec<String>> {
-    println!("Bookshelf:");
-
-    // SELECT DISTINCT b.url FROM bookmarks b , tags t, tags_bookmarks tb WHERE t.id = tb.tag_id AND b.id = tb.bm_id AND t.tag LIKE "%dev%"
-	let mut select_string = String::from("SELECT DISTINCT b.url FROM bookmarks b");
-	if term.len() > 0 {
+fn get_bookmarks(conn: &Connection, term: String) -> Result<Vec<String>> {
+    let mut select_string = String::from("SELECT DISTINCT b.url FROM bookmarks b");
+    if term.len() > 0 {
 		select_string.push_str(&format!(", tags t, tags_bookmarks tb
         WHERE t.id = tb.tag_id AND b.id = tb.bookmark_id AND t.tag LIKE \"%{}%\" OR b.url LIKE \"%{}%\"", term, term));
-	}
-    let mut stmt = try!(conn.prepare(&select_string));
+    }
+    let mut stmt = conn.prepare(&select_string)?;
+    let mut rows = stmt.query([])?;
 
-    let mut bms = vec!();
+    let mut bms = Vec::new();
+    while let Some(row) = rows.next()? {
+        bms.push(row.get(0)?);
+    }
 
-    try!(stmt.query(
-        &[], &mut |row| {
-            bms.push(row.get(0));
-            Ok(())
-        }));
     Ok(bms)
 }
-
 
 fn main() {
     let args: Vec<_> = env::args().collect();
 	let db_path = "bookshelf.db";
-	let db_details = access::ByFilename { flags: Default::default(), filename: db_path };
 
 	//TODO: error handle no connection
-	let conn = DatabaseConnection::new(db_details).unwrap();
+	let conn = Connection::open(&db_path).unwrap();
 
     let prog = &args[0];
     let mut opts = Options::new();
@@ -131,7 +108,7 @@ fn main() {
     }
     if matches.opt_present("l") {
 		let term = matches.opt_str("l").unwrap_or(String::from(""));
-        let bms = get_bookmarks(conn, term).unwrap();
+        let bms = get_bookmarks(&conn, term).unwrap();
 		for b in bms {
 			println!("{:?}", b);
 		}
@@ -139,12 +116,12 @@ fn main() {
     }
     if matches.opt_present("o") {
 		let term = matches.opt_str("o").unwrap_or(String::from(""));
-        let bms = get_bookmarks(conn, term).unwrap();
+        let bms = get_bookmarks(&conn, term).unwrap();
 		for b in bms {
 			println!("{:?}", b);
-            //TODO: open across all platforms
-            //TODO: handle http/https
-            Command::new("open").arg("http://".to_string() + &b).spawn().ok().expect("Failed to execute.");
+        //     //TODO: open across all platforms
+        //     //TODO: handle http/https
+            Command::new("open").arg(b).spawn().ok().expect("Failed to execute.");
 		}
         return;
     }
